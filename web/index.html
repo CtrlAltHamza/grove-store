@@ -9,25 +9,36 @@
   <script type="module" src="/assets/storefront.js"></script>
 </head>
 <body>
+  <a class="skip-link" href="#main">Skip to content</a>
   <header class="header">
     <a class="brand" href="/">Grove Supply<span>.</span></a>
-    <nav aria-label="Main navigation"><a href="#products">Shop</a><a href="#assistant">Ask the shop</a><a href="/admin">Dashboard</a></nav>
+    <nav aria-label="Main navigation"><a href="#products">Shop the collection</a><a href="#assistant">Ask the shop</a><a class="nav-admin" href="/admin">Seller dashboard</a></nav>
   </header>
-  <main>
-    <section class="hero">
-      <div><p class="eyebrow">Grove Supply / Everyday goods</p><h1>Good things<br>for every day.</h1>
-        <p>Insulated drinkware, canvas bags, and recycled-paper stationery for your daily routine.</p>
-        <a class="button" href="#products">Browse the collection</a>
+  <main id="main">
+    <section class="hero" aria-labelledby="hero-heading">
+      <div class="hero-copy">
+        <p class="eyebrow">The everyday collection</p>
+        <h1 id="hero-heading">Good things<br>for <em>every day.</em></h1>
+        <p class="hero-description">An insulated bottle for the road, a tote for the market, and a pocket journal for whatever comes to mind.</p>
+        <div class="hero-actions"><a class="button" href="#products">Shop the collection</a><a class="text-link" href="#assistant">Ask the shop</a></div>
       </div>
-      <div class="hero-art" aria-hidden="true"><div class="shape bottle"></div><div class="shape journal"></div></div>
+      <div class="hero-art">
+        <img class="hero-photo" src="/assets/grove-collection.jpg" alt="An insulated bottle, canvas tote, notebook, and stoneware mug" width="1448" height="1086" fetchpriority="high">
+      </div>
     </section>
+    <div class="store-policies" aria-label="Store policies">
+      <p><strong>US shipping</strong><span>3–5 business days</span></p>
+      <p><strong>Free shipping</strong><span>On orders of $60 or more</span></p>
+      <p><strong>30-day returns</strong><span>For unused items</span></p>
+    </div>
     <div class="shop-layout">
       <section id="products" aria-labelledby="products-heading">
-        <div class="section-heading"><h2 id="products-heading">The collection</h2><output id="product-count"></output></div>
-        <p id="catalog-status" role="status"></p><div id="catalog" class="products"></div>
+        <div class="section-heading"><h2 id="products-heading">Shop the collection</h2><output id="product-count"></output></div>
+        <div id="category-filters" class="category-filters" role="group" aria-label="Filter products"></div>
+        <p id="catalog-status" role="status">Loading products…</p><div id="catalog" class="products"></div>
       </section>
       <section id="assistant" class="assistant" aria-labelledby="assistant-heading">
-        <div class="section-heading"><h2 id="assistant-heading">Ask the shop</h2><button id="new-chat" class="secondary" type="button">New chat</button></div>
+        <div class="assistant-heading section-heading"><h2 id="assistant-heading">Ask the shop</h2><button id="new-chat" class="secondary" type="button">New chat</button></div>
         <div id="messages" class="messages" role="log" aria-label="Conversation"></div>
         <div class="suggestions"><button class="secondary" data-prompt="/shipping">Shipping</button><button class="secondary" data-prompt="/returns">Returns</button></div>
         <form id="chat-form">
@@ -39,6 +50,6 @@
       </section>
     </div>
   </main>
-  <footer>Grove Supply <span>ShopBot workshop demo</span></footer>
+  <footer><a class="brand" href="/">Grove Supply</a><span>ShopBot workshop demo</span><a href="/admin">Seller dashboard</a></footer>
 </body>
 </html>
