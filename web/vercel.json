@@ -1,0 +1,9 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "cleanUrls": true,
+  "rewrites": [
+    {"source": "/chat", "destination": "https://grove-store.onrender.com/chat"},
+    {"source": "/catalog", "destination": "https://grove-store.onrender.com/catalog"},
+    {"source": "/admin/overview", "destination": "https://grove-store.onrender.com/admin/overview"}
+  ]
+}
