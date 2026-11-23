@@ -6,6 +6,7 @@
     {"source": "/shopper/session", "destination": "https://grove-store.onrender.com/shopper/session"},
     {"source": "/shopper/chat", "destination": "https://grove-store.onrender.com/shopper/chat"},
     {"source": "/catalog", "destination": "https://grove-store.onrender.com/catalog"},
+    {"source": "/admin/catalog/:path*", "destination": "https://grove-store.onrender.com/admin/catalog/:path*"},
     {"source": "/admin/overview", "destination": "https://grove-store.onrender.com/admin/overview"}
   ]
 }

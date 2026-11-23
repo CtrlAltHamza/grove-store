@@ -1,4 +1,8 @@
+import csv
+import hashlib
 import hmac
+import io
+import json
 import os
 import re
 import secrets
@@ -8,11 +12,12 @@ from uuid import uuid4
 
 from anthropic import APIError, RateLimitError
 from dotenv import load_dotenv
-from fastapi import FastAPI, Header, HTTPException, Response
+from fastapi import FastAPI, Header, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
+from starlette.concurrency import run_in_threadpool
 
 from agent import build_agent
 from store import Store
@@ -51,6 +56,44 @@ class ChatResponse(BaseModel):
     tokens: Tokens
 
 
+CATALOG_COLUMNS = ("sku", "name", "category", "price", "stock", "description", "art")
+CATALOG_ART = {"bottle", "tote", "journal", "mug"}
+
+
+async def read_catalog_csv(request: Request):
+    data = bytearray()
+    async for chunk in request.stream():
+        if len(data) + len(chunk) > 128 * 1024:
+            raise HTTPException(413, "The catalog CSV must be under 128 KB.")
+        data.extend(chunk)
+    try:
+        reader = csv.DictReader(io.StringIO(data.decode("utf-8-sig")), strict=True)
+        if tuple(reader.fieldnames or ()) != CATALOG_COLUMNS:
+            raise HTTPException(422, "Use the CSV template headers in the order shown.")
+        products = {}
+        for row in reader:
+            if len(products) >= 100:
+                raise HTTPException(422, "Import at most 100 products at once.")
+            if None in row or any(value is None for value in row.values()):
+                raise HTTPException(422, f"Line {reader.line_num} has the wrong number of columns.")
+            sku, name, category, price, stock, description, art = (row[key].strip() for key in CATALOG_COLUMNS)
+            if not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,47}", sku) or sku in products:
+                raise HTTPException(422, f"Line {reader.line_num} needs a unique lowercase SKU.")
+            if not (0 < len(name) <= 80 and 0 < len(category) <= 40 and 0 < len(description) <= 300):
+                raise HTTPException(422, f"Line {reader.line_num} has an empty or oversized text field.")
+            if not re.fullmatch(r"[0-9]{1,5}\.[0-9]{2}", price) or not re.fullmatch(r"[0-9]{1,5}", stock):
+                raise HTTPException(422, f"Line {reader.line_num} needs a USD price with two decimals and a whole stock count.")
+            if art not in CATALOG_ART:
+                raise HTTPException(422, f"Line {reader.line_num} needs one of the art values in the template.")
+            products[sku] = {"sku": sku, "name": name, "category": category, "cents": int(price.replace(".", "")),
+                             "stock": int(stock), "description": description, "art": art}
+    except (UnicodeError, csv.Error):
+        raise HTTPException(422, "Upload a valid UTF-8 CSV file.") from None
+    if not products:
+        raise HTTPException(422, "Add at least one product row.")
+    return list(products.values())
+
+
 def sign_shopper_id(shopper_id):
     secret = os.getenv("SHOPBOT_SESSION_SECRET") or os.getenv("SHOPBOT_ADMIN_TOKEN")
     if not secret:
@@ -87,20 +130,23 @@ def create_app(store=None, model=None):
         response.headers["Cache-Control"] = "no-store"
         if not request.message.strip():
             raise HTTPException(422, "Enter a message.")
-        with store.conversation(user_id) as connection:
-            history, pending = store.thread(connection, user_id, request.thread_id)
+        # Encode both components unambiguously and keep caller-provided IDs out of checkpoint keys.
+        key = hashlib.sha256(json.dumps([user_id, request.thread_id]).encode()).hexdigest()
+        config = {"configurable": {"thread_id": key}}
+        with store.conversation(user_id) as connection, store.checkpointer(connection) as saver:
+            graph = chat.compile(checkpointer=saver)
+            turn = {"message": request.message, "reply": None, "facts": {}, "tool_calls": [], "tokens": {"in": 0, "out": 0}}
+            if saver.get_tuple(config) is None:
+                history, pending = store.legacy_thread(connection, user_id, request.thread_id)
+                turn.update(history=history[-12:], pending=pending)
             try:
-                result = chat.invoke({
-                    "message": request.message, "user_id": user_id, "connection": connection,
-                    "history": history, "pending": pending, "preference": store.preference(connection, user_id),
-                    "tool_calls": [], "tokens": {"in": 0, "out": 0},
+                result = graph.invoke(turn, config, durability="exit", context={
+                    "user_id": user_id, "connection": connection, "preference": store.preference(connection, user_id),
                 })
             except RateLimitError:
                 raise HTTPException(503, "The sales assistant is busy. Try again shortly.") from None
             except APIError:
                 raise HTTPException(503, "The sales assistant is temporarily unavailable.") from None
-            history.extend([{"role": "user", "text": request.message}, {"role": "assistant", "text": result["reply"]}])
-            store.save_thread(connection, user_id, request.thread_id, history, result["pending"])
             tokens = result["tokens"]
             return ChatResponse(reply=result["reply"], tool_calls=result["tool_calls"],
                                 tokens=Tokens(in_=tokens["in"], out=tokens["out"]))
@@ -124,14 +170,31 @@ def create_app(store=None, model=None):
         # Public grading IDs cannot contain a slash, so they cannot address storefront records.
         return run_chat(f"shopper/{match[1]}", request, response)
 
-    @app.get("/admin/overview")
-    def overview(response: Response, authorization: str | None = Header(default=None)):
+    def require_admin(response: Response, authorization: str | None):
         token = os.getenv("SHOPBOT_ADMIN_TOKEN")
         if not token:
             raise HTTPException(503, "Set SHOPBOT_ADMIN_TOKEN to enable the dashboard.")
         if not secrets.compare_digest((authorization or "").encode(), f"Bearer {token}".encode()):
             raise HTTPException(401, "Enter the dashboard access token.")
         response.headers["Cache-Control"] = "no-store"
+
+    @app.post("/admin/catalog/preview")
+    async def preview_catalog(request: Request, response: Response, authorization: str | None = Header(default=None)):
+        require_admin(response, authorization)
+        return {"products": await read_catalog_csv(request)}
+
+    @app.post("/admin/catalog/import")
+    async def import_catalog(request: Request, response: Response, authorization: str | None = Header(default=None)):
+        require_admin(response, authorization)
+        products = await read_catalog_csv(request)
+        # Run the synchronous database transaction outside the request event loop.
+        if not await run_in_threadpool(store.upsert_products, products):
+            raise HTTPException(422, "The store can contain at most 100 products.")
+        return {"saved": len(products)}
+
+    @app.get("/admin/overview")
+    def overview(response: Response, authorization: str | None = Header(default=None)):
+        require_admin(response, authorization)
         with store.connect() as connection:
             products = store.catalog(connection)
             summary = dict(connection.execute(

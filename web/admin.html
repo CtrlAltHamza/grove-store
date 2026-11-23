@@ -16,6 +16,20 @@
     <p role="status" id="status"></p>
     <div id="overview" hidden>
       <div class="metrics"><article><p>Demo orders</p><strong id="count"></strong></article><article><p>Order subtotal</p><strong id="total"></strong></article><article><p>Units in stock</p><strong id="stock"></strong></article></div>
+      <section class="catalog-import" aria-labelledby="import-heading">
+        <h2 id="import-heading">Upload a catalog</h2>
+        <p>Preview a CSV before importing. Matching SKUs are updated, including their stock counts.</p>
+        <p><a href="/assets/catalog-template.csv" download>Download the CSV template</a></p>
+        <form id="catalog-upload">
+          <label for="catalog-file">Catalog CSV</label>
+          <div class="form-row"><input id="catalog-file" type="file" accept=".csv,text/csv" required><button type="submit">Preview catalog</button></div>
+        </form>
+        <p id="import-status" role="status"></p>
+        <div id="catalog-preview" hidden>
+          <div class="table-wrap"><table><thead><tr><th>SKU</th><th>Product</th><th>Category</th><th>Price</th><th>Stock</th></tr></thead><tbody id="preview-rows"></tbody></table></div>
+          <button id="save-catalog" type="button">Apply catalog import</button>
+        </div>
+      </section>
       <section><h2>Inventory</h2><div class="table-wrap"><table><thead><tr><th>Product</th><th>SKU</th><th>Price</th><th>In stock</th></tr></thead><tbody id="inventory"></tbody></table></div></section>
       <section><h2>Recent demo orders</h2><p id="empty-orders" hidden>No confirmed orders yet.</p><div class="table-wrap"><table id="orders-table"><thead><tr><th>Reference</th><th>Product</th><th>Quantity</th><th>Subtotal</th><th>Placed</th></tr></thead><tbody id="orders"></tbody></table></div></section>
     </div>

@@ -6,6 +6,7 @@
     {"source": "/shopper/session", "destination": "https://YOUR-API-HOST/shopper/session"},
     {"source": "/shopper/chat", "destination": "https://YOUR-API-HOST/shopper/chat"},
     {"source": "/catalog", "destination": "https://YOUR-API-HOST/catalog"},
+    {"source": "/admin/catalog/:path*", "destination": "https://YOUR-API-HOST/admin/catalog/:path*"},
     {"source": "/admin/overview", "destination": "https://YOUR-API-HOST/admin/overview"}
   ]
 }

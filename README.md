@@ -1,6 +1,8 @@
 # Grove Supply · ShopBot
 
-A storefront and sales assistant for a small seller. Shoppers can browse live inventory, compare products, check store policies, save preferences, and confirm a demo order. The seller dashboard shows inventory, order counts, and subtotals.
+A storefront and sales assistant for a small online seller. Shoppers can browse live inventory, compare products, check store policies, save preferences, and confirm a demo order. The seller dashboard shows inventory, recent orders, and order subtotals. Sellers can upload a CSV, preview validated rows, and apply the import. The proposed business model is a $19 monthly subscription per seller. The demo does not collect payments.
+
+[Live storefront](https://grove-store-web.vercel.app/) · [Seller dashboard](https://grove-store-web.vercel.app/admin) · [Agent API health](https://grove-store.onrender.com/health)
 
 ```mermaid
 flowchart LR
@@ -11,6 +13,10 @@ flowchart LR
     Prepare -->|Catalog, policies, preferences, order confirmation| Tools[Shop tools]
     Prepare -->|Shopping questions| Advise[LangGraph · sales advisor]
     Advise --> Claude[Claude Haiku 5.5]
+    Prepare --> Record[LangGraph · record turn]
+    Advise --> Record
+    Record --> Checkpoint[LangGraph checkpointer]
+    Checkpoint --> DB
     API --> DB[(Postgres in deployment)]
     Tools --> DB
 ```
@@ -27,7 +33,7 @@ python -m uvicorn server:app --host 127.0.0.1 --port 8000
 
 Before launching, set your group’s `ANTHROPIC_API_KEY` and a strong `SHOPBOT_ADMIN_TOKEN` in the ignored `.env`. The default model is `claude-haiku-5-5`. If this repository is directly inside the Workshop workspace, ShopBot can also read the existing group credentials from the parent workspace’s `.env`.
 
-Open [the storefront](http://127.0.0.1:8000/) and [the seller dashboard](http://127.0.0.1:8000/admin). The dashboard requires the configured token. Use `/catalog`, `/shipping`, and `/returns` for quick lookups. Use `/remember recycled paper` and `/preference` to try memory across chats. To try a demo order, select **Order** on a product and confirm in the chat. Each confirmation updates stock and creates an order. The demo collects no payments.
+Open [the storefront](http://127.0.0.1:8000/) and [the seller dashboard](http://127.0.0.1:8000/admin). Unlock the dashboard with the configured token and download the [CSV template](web/assets/catalog-template.csv). Supported product art values are `bottle`, `tote`, `journal`, and `mug`. The import updates matching SKUs and inserts new ones in one transaction. Omitted products are kept. Stock counts in the uploaded rows replace the current counts. Use `/catalog`, `/shipping`, and `/returns` for quick lookups. Use `/remember recycled paper` and `/preference` to try memory across chats. To try a demo order, select **Order** on a product and confirm in the chat. Each confirmation updates stock and creates an order. The demo collects no payments.
 
 ## Grading API
 
@@ -36,11 +42,13 @@ Open [the storefront](http://127.0.0.1:8000/) and [the seller dashboard](http://
 
 ## Memory and access
 
-Short-term memory keeps the last six user-assistant turns and any open order confirmation under the composite key `(user_id, thread_id)`. Long-term memory stores a shopper’s explicitly saved shopping preference by `user_id`. Products, confirmed orders, conversations, and preferences persist in Postgres in deployment. Local development defaults to file-backed SQLite.
+Short-term memory uses a LangGraph checkpointer. Its `thread_id` is derived from the identity and conversation ID, so shoppers can use the same conversation ID without sharing state. The final graph node trims active context to the last six user-assistant turns. Pending order confirmations are checkpointed with the quoted price. Existing threads are loaded once from their earlier transcript records. Long-term memory stores a shopper’s explicitly saved shopping preference by `user_id`. Production uses Supabase Postgres for checkpoints, preferences, products, and confirmed orders. Local development defaults to file-backed SQLite.
 
 The storefront creates a signed anonymous session per browser profile and a fresh thread ID per chat. It saves the session token in browser storage so preferences survive reloads. The shopper endpoint authenticates the token and derives the internal shopper ID on the server. The public grading API keeps its open, caller-supplied IDs and cannot address authenticated shopper records. Use the public grading API only with demo data. Store-wide data requires a separate admin token. PostgreSQL row-level security blocks Supabase client roles from accessing the shop tables directly. The backend connects as the table owner.
 
 Set a stable random `SHOPBOT_SESSION_SECRET` to sign storefront sessions independently. If it is unset, the server uses the configured `SHOPBOT_ADMIN_TOKEN` with a separate signing context. Rotating the signing secret or clearing browser storage starts a new anonymous session. Preferences from the original storefront, which used unsigned IDs on the grading endpoint, do not carry over.
+
+Each deployment serves one seller. To host another business, use a separate deployment, database, and seller credentials.
 
 ## Deployment
 

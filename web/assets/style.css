@@ -146,6 +146,10 @@ nav a { font-size: .9rem; font-weight: 650; text-decoration: none; }
 .form-row { margin-top: .4rem; }
 .form-row button { white-space: nowrap; }
 .admin section, .metrics { margin-top: 2rem; }
+.catalog-import { padding: clamp(1rem, 3vw, 1.6rem); background: var(--paper); border: 1px solid var(--line); border-radius: .8rem; }
+.catalog-import p, .catalog-import form, .catalog-import #save-catalog { margin-top: .65rem; }
+.catalog-import .form-row { flex-wrap: wrap; }
+.catalog-import .form-row input { flex: 1 1 15rem; }
 .metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 12rem), 1fr)); gap: 1rem; }
 .metrics strong { font-size: 2rem; font-variant-numeric: tabular-nums; }
 .table-wrap { overflow-x: auto; }

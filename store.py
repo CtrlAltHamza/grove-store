@@ -5,6 +5,8 @@ from contextlib import contextmanager
 from pathlib import Path
 
 import psycopg
+from langgraph.checkpoint.postgres import PostgresSaver
+from langgraph.checkpoint.sqlite import SqliteSaver
 from psycopg.rows import dict_row
 
 
@@ -64,6 +66,24 @@ class Store:
             for product in PRODUCTS:
                 self.execute(connection, "INSERT INTO shop_products VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING", product)
 
+        if self.database_url:
+            # LangGraph migrations include CREATE INDEX CONCURRENTLY.
+            with psycopg.connect(self.database_url, autocommit=True, connect_timeout=5) as connection:
+                connection.execute("SELECT pg_advisory_lock(1350104283)")
+                PostgresSaver(connection).setup()
+                connection.execute("ALTER TABLE checkpoint_migrations ENABLE ROW LEVEL SECURITY")
+                connection.execute("ALTER TABLE checkpoints ENABLE ROW LEVEL SECURITY")
+                connection.execute("ALTER TABLE checkpoint_blobs ENABLE ROW LEVEL SECURITY")
+                connection.execute("ALTER TABLE checkpoint_writes ENABLE ROW LEVEL SECURITY")
+
+    @contextmanager
+    def checkpointer(self, connection):
+        if self.database_url:
+            yield PostgresSaver(connection)
+        else:
+            with SqliteSaver.from_conn_string(f"{self.sqlite_path}.checkpoints.sqlite3") as saver:
+                yield saver
+
     @contextmanager
     def conversation(self, user_id):
         with self.connect() as connection:
@@ -76,16 +96,24 @@ class Store:
     def catalog(self, connection):
         return [dict(row) for row in connection.execute("SELECT * FROM shop_products ORDER BY sku")]
 
-    def thread(self, connection, user_id, thread_id):
+    def upsert_products(self, products):
+        with self.conversation("admin/catalog-import") as connection:
+            current = {row["sku"] for row in self.catalog(connection)}
+            if len(current.union(product["sku"] for product in products)) > 100:
+                return False
+            for product in products:
+                self.execute(connection, """INSERT INTO shop_products (sku, name, category, cents, stock, description, art)
+                    VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT (sku) DO UPDATE SET
+                    name=excluded.name, category=excluded.category, cents=excluded.cents,
+                    stock=excluded.stock, description=excluded.description, art=excluded.art""",
+                    tuple(product[key] for key in ("sku", "name", "category", "cents", "stock", "description", "art")))
+            return True
+
+    def legacy_thread(self, connection, user_id, thread_id):
         row = self.execute(connection, "SELECT transcript, pending FROM shop_threads WHERE user_id = ? AND thread_id = ?", (user_id, thread_id)).fetchone()
         if row is None:
             return [], None
         return json.loads(row["transcript"]), json.loads(row["pending"]) if row["pending"] else None
-
-    def save_thread(self, connection, user_id, thread_id, history, pending):
-        self.execute(connection, """INSERT INTO shop_threads VALUES (?, ?, ?, ?)
-            ON CONFLICT (user_id, thread_id) DO UPDATE SET transcript = excluded.transcript, pending = excluded.pending""",
-            (user_id, thread_id, json.dumps(history[-12:]), json.dumps(pending) if pending else None))
 
     def preference(self, connection, user_id):
         row = self.execute(connection, "SELECT preferences FROM shop_profiles WHERE user_id = ?", (user_id,)).fetchone()
@@ -95,9 +123,12 @@ class Store:
         self.execute(connection, """INSERT INTO shop_profiles VALUES (?, ?)
             ON CONFLICT (user_id) DO UPDATE SET preferences = excluded.preferences""", (user_id, preference))
 
-    def order(self, connection, user_id, order_id, sku, quantity):
+    def order(self, connection, user_id, order_id, sku, quantity, quoted_cents):
+        if quoted_cents is None:
+            return None
         row = self.execute(connection, """UPDATE shop_products SET stock = stock - ?
-            WHERE sku = ? AND stock >= ? RETURNING name, cents""", (quantity, sku, quantity)).fetchone()
+            WHERE sku = ? AND stock >= ? AND cents = ? RETURNING name, cents""",
+            (quantity, sku, quantity, quoted_cents)).fetchone()
         if row is None:
             return None
         self.execute(connection, "INSERT INTO shop_orders (id, user_id, sku, quantity, total_cents) VALUES (?, ?, ?, ?, ?)",

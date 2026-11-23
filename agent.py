@@ -6,6 +6,7 @@ from uuid import uuid4
 from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.graph import END, START, StateGraph
+from langgraph.runtime import Runtime
 
 
 REFUSAL = "I can help with Grove Supply products, delivery, returns, and demo orders."
@@ -28,20 +29,23 @@ def money(cents):
 class Turn(TypedDict, total=False):
     message: str
     history: list
-    preference: str
     pending: dict | None
-    connection: object
-    user_id: str
-    reply: str
+    reply: str | None
     tool_calls: list
     facts: dict
     tokens: dict
 
 
+class TurnContext(TypedDict):
+    connection: object
+    user_id: str
+    preference: str
+
+
 def build_agent(store, model_name, model=None):
-    def prepare_turn(state: Turn):
+    def prepare_turn(state: Turn, runtime: Runtime[TurnContext]):
         message = state["message"].strip()
-        connection, user_id = state["connection"], state["user_id"]
+        connection, user_id, preference = (runtime.context[key] for key in ("connection", "user_id", "preference"))
         pending = state["pending"]
         if INJECTION.search(message):
             return {"reply": REFUSAL, "pending": None}
@@ -49,9 +53,9 @@ def build_agent(store, model_name, model=None):
         if match := re.fullmatch(r"confirm ([a-f0-9]{8})", message, re.IGNORECASE):
             if not pending or match[1].lower() != pending["id"][:8]:
                 return {"reply": "There is no matching order to confirm in this conversation."}
-            order = store.order(connection, user_id, pending["id"], pending["sku"], pending["quantity"])
+            order = store.order(connection, user_id, pending["id"], pending["sku"], pending["quantity"], pending.get("cents"))
             if not order:
-                return {"reply": "That quantity is no longer available.", "pending": None}
+                return {"reply": "The price or stock has changed. Please start a new order for the current quote.", "pending": None}
             total = money(order["cents"] * pending["quantity"])
             return {
                 "reply": f"Demo order {pending['id'][:8].upper()} placed for {pending['quantity']} × {order['name']} ({total} subtotal). No payment was taken.",
@@ -67,12 +71,12 @@ def build_agent(store, model_name, model=None):
             return {"reply": "I’ll remember that shopping preference for future conversations.",
                     "tool_calls": [{"name": "save_shopping_preference"}]}
         if message.casefold() in {"what is my shopping preference?", "what is my shopping preference", "/preference"}:
-            return {"reply": f"Your saved shopping preference is {state['preference']}." if state["preference"] else "You haven’t saved a shopping preference yet.",
+            return {"reply": f"Your saved shopping preference is {preference}." if preference else "You haven’t saved a shopping preference yet.",
                     "tool_calls": [{"name": "read_shopping_preference"}]}
 
         products = store.catalog(connection)
         tools = [{"name": "lookup_catalog", "matches": len(products)}]
-        purchase = re.fullmatch(r"/buy ([a-z-]+) ([1-9]\d?)", message)
+        purchase = re.fullmatch(r"/buy ([a-z0-9][a-z0-9-]{0,47}) ([1-9]\d?)", message)
         if purchase:
             sku, quantity = purchase[1], int(purchase[2])
             product = next((product for product in products if product["sku"] == sku), None)
@@ -81,7 +85,7 @@ def build_agent(store, model_name, model=None):
             order_id = uuid4().hex
             return {
                 "reply": f"Place a demo order for {quantity} × {product['name']} ({money(product['cents'] * quantity)} subtotal)? No payment will be taken. Reply CONFIRM {order_id[:8].upper()} to proceed, or CANCEL.",
-                "pending": {"id": order_id, "sku": sku, "quantity": quantity},
+                "pending": {"id": order_id, "sku": sku, "quantity": quantity, "cents": product["cents"]},
                 "tool_calls": tools,
             }
 
@@ -98,7 +102,7 @@ def build_agent(store, model_name, model=None):
 
         return {"facts": {"catalog": products, "policies": policy}, "tool_calls": tools}
 
-    def advise(state: Turn):
+    def advise(state: Turn, runtime: Runtime[TurnContext]):
         advisor = model if model is not None else ChatAnthropic(model=model_name, max_tokens=240, timeout=12, max_retries=0)
         instructions = (
             "You are the Grove Supply sales assistant. Only help with this shop’s products, delivery, returns, "
@@ -110,16 +114,23 @@ def build_agent(store, model_name, model=None):
             "customer to the Order button, or give the command /buy <sku> <quantity>. An order requires separate "
             "confirmation. You have no payment capability. Be concise and use plain text."
         )
-        context = {key: state[key] for key in ("message", "history", "preference", "facts")}
+        context = {key: state[key] for key in ("message", "history", "facts")}
+        context["preference"] = runtime.context["preference"]
         response = advisor.invoke([SystemMessage(content=instructions), HumanMessage(content=json.dumps(context, ensure_ascii=False))])
         usage = response.usage_metadata or {}
         return {"reply": response.text, "tokens": {"in": usage.get("input_tokens", 0), "out": usage.get("output_tokens", 0)}}
 
-    workflow = StateGraph(Turn)
+    def record_turn(state: Turn):
+        turn = [{"role": "user", "text": state["message"]}, {"role": "assistant", "text": state["reply"]}]
+        return {"history": [*state["history"], *turn][-12:], "facts": {}}
+
+    workflow = StateGraph(Turn, context_schema=TurnContext)
     workflow.add_node("prepare_turn", prepare_turn)
     workflow.add_node("advise", advise)
     workflow.add_edge(START, "prepare_turn")
-    workflow.add_conditional_edges("prepare_turn", lambda state: "done" if "reply" in state else "advise",
-                                   {"done": END, "advise": "advise"})
-    workflow.add_edge("advise", END)
-    return workflow.compile()
+    workflow.add_node("record_turn", record_turn)
+    workflow.add_conditional_edges("prepare_turn", lambda state: "record_turn" if state["reply"] else "advise",
+                                   ["record_turn", "advise"])
+    workflow.add_edge("advise", "record_turn")
+    workflow.add_edge("record_turn", END)
+    return workflow
