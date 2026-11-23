@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="description" content="Shop practical everyday goods at Grove Supply.">
+  <title>Grove Supply · Everyday Goods</title>
+  <link rel="stylesheet" href="/assets/style.css">
+  <script type="module" src="/assets/storefront.js"></script>
+</head>
+<body>
+  <header class="header">
+    <a class="brand" href="/">Grove Supply<span>.</span></a>
+    <nav aria-label="Main navigation"><a href="#products">Shop</a><a href="#assistant">Ask the shop</a><a href="/admin">Dashboard</a></nav>
+  </header>
+  <main>
+    <section class="hero">
+      <div><p class="eyebrow">Grove Supply / Everyday goods</p><h1>Good things<br>for every day.</h1>
+        <p>Insulated drinkware, canvas bags, and recycled-paper stationery for your daily routine.</p>
+        <a class="button" href="#products">Browse the collection</a>
+      </div>
+      <div class="hero-art" aria-hidden="true"><div class="shape bottle"></div><div class="shape journal"></div></div>
+    </section>
+    <div class="shop-layout">
+      <section id="products" aria-labelledby="products-heading">
+        <div class="section-heading"><h2 id="products-heading">The collection</h2><output id="product-count"></output></div>
+        <p id="catalog-status" role="status"></p><div id="catalog" class="products"></div>
+      </section>
+      <section id="assistant" class="assistant" aria-labelledby="assistant-heading">
+        <div class="section-heading"><h2 id="assistant-heading">Ask the shop</h2><button id="new-chat" class="secondary" type="button">New chat</button></div>
+        <div id="messages" class="messages" role="log" aria-label="Conversation"></div>
+        <div class="suggestions"><button class="secondary" data-prompt="/shipping">Shipping</button><button class="secondary" data-prompt="/returns">Returns</button></div>
+        <form id="chat-form">
+          <label class="visually-hidden" for="message">Your message</label>
+          <input id="message" name="message" maxlength="2000" placeholder="Ask about a product" required>
+          <button type="submit">Send</button>
+        </form>
+        <p class="small">Demo orders only. No payment is collected.</p>
+      </section>
+    </div>
+  </main>
+  <footer>Grove Supply <span>ShopBot workshop demo</span></footer>
+</body>
+</html>

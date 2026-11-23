@@ -1,0 +1,9 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "cleanUrls": true,
+  "rewrites": [
+    {"source": "/chat", "destination": "https://YOUR-API-HOST/chat"},
+    {"source": "/catalog", "destination": "https://YOUR-API-HOST/catalog"},
+    {"source": "/admin/overview", "destination": "https://YOUR-API-HOST/admin/overview"}
+  ]
+}

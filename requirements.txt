@@ -1,0 +1,6 @@
+fastapi==0.165.0
+uvicorn==0.54.0
+langchain-anthropic==1.7.12
+langgraph==1.2.24
+psycopg[binary]==3.3.9
+python-dotenv>=1,<2
