@@ -38,7 +38,9 @@ Open [the storefront](http://127.0.0.1:8000/) and [the seller dashboard](http://
 
 Short-term memory keeps the last six user-assistant turns and any open order confirmation under the composite key `(user_id, thread_id)`. Long-term memory stores a shopper’s explicitly saved shopping preference by `user_id`. Products, confirmed orders, conversations, and preferences persist in Postgres in deployment. Local development defaults to file-backed SQLite.
 
-The storefront generates an opaque user ID per browser profile and a fresh thread ID per chat. The grading API trusts the supplied IDs by design. Data queries are scoped to those IDs, but callers who know someone’s ID can impersonate them through the public API. Keep the public demo free of private shopper information. Store-wide data is protected by a separate admin token.
+The storefront creates a signed anonymous session per browser profile and a fresh thread ID per chat. It saves the session token in browser storage so preferences survive reloads. The shopper endpoint authenticates the token and derives the internal shopper ID on the server. The public grading API keeps its open, caller-supplied IDs and cannot address authenticated shopper records. Use the public grading API only with demo data. Store-wide data requires a separate admin token. PostgreSQL row-level security blocks Supabase client roles from accessing the shop tables directly. The backend connects as the table owner.
+
+Set a stable random `SHOPBOT_SESSION_SECRET` to sign storefront sessions independently. If it is unset, the server uses the configured `SHOPBOT_ADMIN_TOKEN` with a separate signing context. Rotating the signing secret or clearing browser storage starts a new anonymous session. Preferences from the original storefront, which used unsigned IDs on the grading endpoint, do not carry over.
 
 ## Deployment
 

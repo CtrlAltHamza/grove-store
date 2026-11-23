@@ -3,6 +3,8 @@
   "cleanUrls": true,
   "rewrites": [
     {"source": "/chat", "destination": "https://YOUR-API-HOST/chat"},
+    {"source": "/shopper/session", "destination": "https://YOUR-API-HOST/shopper/session"},
+    {"source": "/shopper/chat", "destination": "https://YOUR-API-HOST/shopper/chat"},
     {"source": "/catalog", "destination": "https://YOUR-API-HOST/catalog"},
     {"source": "/admin/overview", "destination": "https://YOUR-API-HOST/admin/overview"}
   ]

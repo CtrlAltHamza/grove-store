@@ -13,7 +13,9 @@ export async function api(path, options) {
   const response = await fetch(path, options);
   if (!response.ok) {
     const body = await response.json().catch(() => null);
-    throw new Error(typeof body?.detail === "string" ? body.detail : "The store is temporarily unavailable.");
+    const error = new Error(typeof body?.detail === "string" ? body.detail : "The store is temporarily unavailable.");
+    error.status = response.status;
+    throw error;
   }
   return response.json();
 }

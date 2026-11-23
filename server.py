@@ -1,7 +1,10 @@
+import hmac
 import os
+import re
 import secrets
 from contextlib import asynccontextmanager
 from pathlib import Path
+from uuid import uuid4
 
 from anthropic import APIError, RateLimitError
 from dotenv import load_dotenv
@@ -9,7 +12,7 @@ from fastapi import FastAPI, Header, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from agent import build_agent
 from store import Store
@@ -20,10 +23,21 @@ load_dotenv(ROOT / ".env")
 load_dotenv(ROOT.parent / ".env")
 
 
-class ChatRequest(BaseModel):
-    user_id: str = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_.:@-]+$")
+class ChatMessage(BaseModel):
     thread_id: str = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_.:@-]+$")
     message: str = Field(min_length=1, max_length=2000)
+
+
+class ChatRequest(ChatMessage):
+    user_id: str = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_.:@-]+$")
+
+
+class ShopperChatRequest(ChatMessage):
+    model_config = ConfigDict(extra="forbid")
+
+
+class ShopperSession(BaseModel):
+    token: str
 
 
 class Tokens(BaseModel):
@@ -35,6 +49,13 @@ class ChatResponse(BaseModel):
     reply: str
     tool_calls: list[dict]
     tokens: Tokens
+
+
+def sign_shopper_id(shopper_id):
+    secret = os.getenv("SHOPBOT_SESSION_SECRET") or os.getenv("SHOPBOT_ADMIN_TOKEN")
+    if not secret:
+        raise HTTPException(503, "Shopper sessions are temporarily unavailable.")
+    return hmac.digest(secret.encode(), f"grove-store/shopper/v1/{shopper_id}".encode(), "sha256").hex()
 
 
 def create_app(store=None, model=None):
@@ -62,16 +83,16 @@ def create_app(store=None, model=None):
         with store.connect() as connection:
             return store.catalog(connection)
 
-    @app.post("/chat", response_model=ChatResponse)
-    def send_message(request: ChatRequest):
+    def run_chat(user_id, request: ChatMessage, response: Response):
+        response.headers["Cache-Control"] = "no-store"
         if not request.message.strip():
             raise HTTPException(422, "Enter a message.")
-        with store.conversation(request.user_id) as connection:
-            history, pending = store.thread(connection, request.user_id, request.thread_id)
+        with store.conversation(user_id) as connection:
+            history, pending = store.thread(connection, user_id, request.thread_id)
             try:
                 result = chat.invoke({
-                    "message": request.message, "user_id": request.user_id, "connection": connection,
-                    "history": history, "pending": pending, "preference": store.preference(connection, request.user_id),
+                    "message": request.message, "user_id": user_id, "connection": connection,
+                    "history": history, "pending": pending, "preference": store.preference(connection, user_id),
                     "tool_calls": [], "tokens": {"in": 0, "out": 0},
                 })
             except RateLimitError:
@@ -79,10 +100,29 @@ def create_app(store=None, model=None):
             except APIError:
                 raise HTTPException(503, "The sales assistant is temporarily unavailable.") from None
             history.extend([{"role": "user", "text": request.message}, {"role": "assistant", "text": result["reply"]}])
-            store.save_thread(connection, request.user_id, request.thread_id, history, result["pending"])
+            store.save_thread(connection, user_id, request.thread_id, history, result["pending"])
             tokens = result["tokens"]
             return ChatResponse(reply=result["reply"], tool_calls=result["tool_calls"],
                                 tokens=Tokens(in_=tokens["in"], out=tokens["out"]))
+
+    @app.post("/chat", response_model=ChatResponse)
+    def send_message(request: ChatRequest, response: Response):
+        return run_chat(request.user_id, request, response)
+
+    @app.post("/shopper/session", response_model=ShopperSession)
+    def create_shopper_session(response: Response):
+        shopper_id = uuid4().hex
+        response.headers["Cache-Control"] = "no-store"
+        return ShopperSession(token=f"{shopper_id}.{sign_shopper_id(shopper_id)}")
+
+    @app.post("/shopper/chat", response_model=ChatResponse)
+    def send_shopper_message(request: ShopperChatRequest, response: Response,
+                             authorization: str | None = Header(default=None)):
+        match = re.fullmatch(r"Bearer ([0-9a-f]{32})\.([0-9a-f]{64})", authorization or "")
+        if not match or not secrets.compare_digest(match[2], sign_shopper_id(match[1])):
+            raise HTTPException(401, "Your shopper session is invalid.", headers={"Cache-Control": "no-store"})
+        # Public grading IDs cannot contain a slash, so they cannot address storefront records.
+        return run_chat(f"shopper/{match[1]}", request, response)
 
     @app.get("/admin/overview")
     def overview(response: Response, authorization: str | None = Header(default=None)):

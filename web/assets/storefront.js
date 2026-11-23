@@ -6,8 +6,7 @@ const messages = document.querySelector("#messages");
 const catalog = document.querySelector("#catalog");
 const catalogStatus = document.querySelector("#catalog-status");
 const newChat = document.querySelector("#new-chat");
-const userId = localStorage.getItem("grove-shopper") || crypto.randomUUID();
-localStorage.setItem("grove-shopper", userId);
+const sessionKey = "grove-shopper-session";
 let threadId = crypto.randomUUID();
 let busy = false;
 
@@ -25,6 +24,25 @@ function resetChat() {
   bubble("shop", "Hi! Ask me to compare products, check stock, or explain our delivery and returns.");
 }
 
+async function shopperChat(prompt) {
+  let token = localStorage.getItem(sessionKey);
+  if (!token) {
+    const session = await api("/shopper/session", {method: "POST"});
+    token = localStorage.getItem(sessionKey) || session.token;
+    localStorage.setItem(sessionKey, token);
+  }
+  try {
+    return await api("/shopper/chat", {
+      method: "POST",
+      headers: {"Content-Type": "application/json", Authorization: `Bearer ${token}`},
+      body: JSON.stringify({thread_id: threadId, message: prompt})
+    });
+  } catch (error) {
+    if (error.status === 401 && localStorage.getItem(sessionKey) === token) localStorage.removeItem(sessionKey);
+    throw error;
+  }
+}
+
 async function send(prompt, label = prompt) {
   if (busy || !prompt.trim()) return;
   busy = true;
@@ -33,10 +51,7 @@ async function send(prompt, label = prompt) {
   bubble("user", label);
   const pending = bubble("shop", "Checking…");
   try {
-    const result = await api("/chat", {
-      method: "POST", headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({user_id: userId, thread_id: threadId, message: prompt})
-    });
+    const result = await shopperChat(prompt);
     pending.querySelector("p").textContent = result.reply;
     const confirmation = result.tool_calls.some(call => call.name === "lookup_catalog") &&
       prompt.startsWith("/buy ") && result.reply.match(/\bCONFIRM [A-F0-9]{8}\b/);
@@ -59,7 +74,12 @@ async function send(prompt, label = prompt) {
     }
     if (result.tool_calls.some(call => call.name === "place_demo_order")) void loadCatalog();
   } catch (error) {
-    pending.querySelector("p").textContent = error.message;
+    if (error.status === 401) {
+      resetChat();
+      bubble("shop", "Your shopper session ended. Send your message again to start a new session.");
+    } else {
+      pending.querySelector("p").textContent = error.message;
+    }
   } finally {
     busy = false;
     newChat.disabled = false;

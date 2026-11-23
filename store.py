@@ -54,6 +54,13 @@ class Store:
                 id TEXT PRIMARY KEY, user_id TEXT NOT NULL, sku TEXT NOT NULL, quantity INTEGER NOT NULL,
                 total_cents INTEGER NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
             )""")
+            if self.database_url:
+                # The backend connects as the table owner. Supabase API roles
+                # have no row policies and cannot read or write these tables.
+                connection.execute("ALTER TABLE shop_products ENABLE ROW LEVEL SECURITY")
+                connection.execute("ALTER TABLE shop_threads ENABLE ROW LEVEL SECURITY")
+                connection.execute("ALTER TABLE shop_profiles ENABLE ROW LEVEL SECURITY")
+                connection.execute("ALTER TABLE shop_orders ENABLE ROW LEVEL SECURITY")
             for product in PRODUCTS:
                 self.execute(connection, "INSERT INTO shop_products VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING", product)
 
